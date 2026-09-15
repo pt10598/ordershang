@@ -626,13 +626,13 @@ async def upload_image(file):
   print(f"Image processing failed: {exc}"); return None
 
 @app.post("/admin/menu/save")
-async def menu_save(request:Request,meal_id:str=Form(""),name:str=Form(...),store_id:str=Form(...),category:str=Form(...),description:str=Form(""),price:int=Form(...),image_url:str=Form(""),image_file:UploadFile|None=None,active:str|None=Form(None),sort:int=Form(99),location_ids:list[str]=Form([]),option_1_name:str=Form(""),option_1_price:int=Form(0),option_2_name:str=Form(""),option_2_price:int=Form(0)):
+async def menu_save(request:Request,meal_id:str=Form(""),name:str=Form(...),store_id:str=Form(...),category:str=Form(...),description:str=Form(""),price:int=Form(...),image_url:str=Form(""),image_file:UploadFile|None=None,active:str|None=Form(None),sort:int=Form(99),location_ids:list[str]=Form([]),option_1_name:str=Form(""),option_1_price:int=Form(0),option_2_name:str=Form(""),option_2_price:int=Form(0),option_3_name:str=Form(""),option_3_price:int=Form(0),option_4_name:str=Form(""),option_4_price:int=Form(0)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  store=get_item("stores",store_id)
  if not store:return RedirectResponse("/admin/menu",status_code=303)
  meal_id=meal_id or f"meal-{secrets.token_hex(4)}"; existing=get_item("meals",meal_id) or {}; uploaded=await upload_image(image_file)
  options=[]
- for option_name,option_price in ((option_1_name,option_1_price),(option_2_name,option_2_price)):
+ for option_name,option_price in ((option_1_name,option_1_price),(option_2_name,option_2_price),(option_3_name,option_3_price),(option_4_name,option_4_price)):
   if option_name.strip():options.append({"name":option_name.strip(),"price":max(option_price,0)})
  valid_location_ids={item["id"] for item in list_collection("locations")}; selected_locations=[item for item in location_ids if item in valid_location_ids]
  save_item("meals",meal_id,{"name":name.strip(),"store_id":store_id,"store":store["name"],"category":category.strip(),"description":description.strip(),"price":max(price,0),"image_url":uploaded or image_url.strip() or existing.get("image_url",""),"location_ids":selected_locations,"locations_configured":True,"options":options,"active":active=="on","sort":sort})
