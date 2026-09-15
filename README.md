@@ -1,4 +1,4 @@
-# 膳雞坊線上訂餐系統
+# 膳雉坊線上訂餐系統
 
 Python FastAPI + Google Firestore 的可收單版本。
 
@@ -64,7 +64,7 @@ Heroku 與 GitHub 自動部署連接後，推送到 `main` 即可重新部署。
 
 - 可以沿用同一組 `FIREBASE_CREDENTIALS_BASE64`，本版會以 `FIRESTORE_NAMESPACE=shanzhifang` 建立獨立資料集合，不會讀取原網站訂單。
 - 若只需要將新訂單推播到同一個 LINE 群組，可沿用原本的 LINE Channel secret 與 access token，並在新網站後台重新綁定群組。
-- LINE Messaging API 的一個 Channel 同時只能設定一個 Webhook URL。若原網站與膳雞坊都需要在群組內點按鈕更新訂單，膳雞坊應另外建立一個 Messaging API Channel／官方帳號，避免其中一個網站收不到 Webhook。
+- LINE Messaging API 的一個 Channel 同時只能設定一個 Webhook URL。若原網站與膳雉坊都需要在群組內點按鈕更新訂單，膳雉坊應另外建立一個 Messaging API Channel／官方帳號，避免其中一個網站收不到 Webhook。
 - LINE Pay 測試環境可先沿用；正式營運時應依實際收款商店設定正式金鑰。
 # LINE Pay Sandbox 測試
 

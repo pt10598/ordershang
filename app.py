@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 BASE_DIR = Path(__file__).resolve().parent
 SESSION_SECRET=os.getenv("SESSION_SECRET",secrets.token_urlsafe(48))
-app = FastAPI(title="膳雞坊線上訂餐")
+app = FastAPI(title="膳雉坊線上訂餐")
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, https_only=bool(os.getenv("DYNO")), same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
@@ -42,14 +42,14 @@ templates.env.filters["tw_datetime"]=format_taipei_datetime
 DEFAULT_MEALS = []
 DEFAULT_LOCATIONS = []
 DEFAULT_STORES = [
- {"id":"store-shanzhifang","name":"膳雞坊","logo_url":"/static/shanzhifang-logo.jpg","active":True,"sort":1},
+ {"id":"store-shanzhifang","name":"膳雉坊","logo_url":"/static/shanzhifang-logo.jpg","active":True,"sort":1},
 ]
 DEFAULT_PICKUP_SLOTS=["11:30","12:00","12:30"]
 
 class MemoryStore:
  def __init__(self):
   self.meals={x["id"]:x.copy() for x in DEFAULT_MEALS}; self.locations={x["id"]:x.copy() for x in DEFAULT_LOCATIONS}; self.stores={x["id"]:x.copy() for x in DEFAULT_STORES}; self.orders={}
-  self.settings={"order_date":datetime.now().strftime("%Y-%m-%d"),"headline":"膳雞坊・美味現點","ordering_open":True}
+  self.settings={"order_date":datetime.now().strftime("%Y-%m-%d"),"headline":"膳雉坊・美味現點","ordering_open":True}
   self.pickup_dates={"date-default":{"id":"date-default","date":self.settings["order_date"],"pickup_slots":DEFAULT_PICKUP_SLOTS,"active":True,"sort":1}}
   self.schedules={f"schedule-{i+1}":{"id":f"schedule-{i+1}","date":self.settings["order_date"],"location_id":x["id"],"location_name":x["name"],"pickup_slots":x["pickup_slots"],"active":True,"sort":x["sort"]} for i,x in enumerate(DEFAULT_LOCATIONS)}
 memory=MemoryStore()
@@ -255,7 +255,7 @@ def send_order_notification(oid,order):
  if not group_id:return
  item_lines="\n".join(f"・{item['name']} × {item['qty']}　NT$ {item['subtotal']}" for item in order["items"])
  note=f"\n備註：{order['note']}" if order.get("note") else ""
- message=(f"🍗 膳雞坊・新訂單通知\n"
+ message=(f"🍗 膳雉坊・新訂單通知\n"
           f"訂單編號：{oid}\n"
           f"訂購人：{order['customer_name']}\n"
           f"手機：{order['phone']}\n"
@@ -270,7 +270,7 @@ def send_order_notification(oid,order):
  for status in ("confirmed","completed","picked_up","cancelled"):
   token=line_status_serializer.dumps({"order_id":oid,"status":status,"group_id":group_id})
   buttons.append({"type":"button","style":"primary","height":"sm","margin":"sm","color":button_colors[status],"action":{"type":"postback","label":STATUS_LABELS[status],"data":f"order_status:{token}"}})
- flex={"type":"flex","altText":f"膳雞坊新訂單 {oid}｜{order['customer_name']}｜NT$ {order['total']}","contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","contents":[{"type":"text","text":message,"wrap":True,"size":"sm","color":"#211817"}]},"footer":{"type":"box","layout":"vertical","spacing":"sm","contents":buttons}}}
+ flex={"type":"flex","altText":f"膳雉坊新訂單 {oid}｜{order['customer_name']}｜NT$ {order['total']}","contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","contents":[{"type":"text","text":message,"wrap":True,"size":"sm","color":"#211817"}]},"footer":{"type":"box","layout":"vertical","spacing":"sm","contents":buttons}}}
  push_line_messages(group_id,[flex])
 
 def send_status_notification(oid,order,status):
@@ -278,7 +278,7 @@ def send_status_notification(oid,order,status):
  if not group_id:return
  icons={"new":"🆕","confirmed":"✅","completed":"🎉","picked_up":"🥡","cancelled":"❌"}
  label=STATUS_LABELS.get(status,status)
- message=(f"{icons.get(status,'📌')} 膳雞坊・訂單狀態更新\n"
+ message=(f"{icons.get(status,'📌')} 膳雉坊・訂單狀態更新\n"
           f"訂單編號：{oid}\n"
           f"目前狀態：{label}\n"
           f"訂購人：{order.get('customer_name','')}\n"
@@ -343,6 +343,12 @@ def seed_database():
   settings=get_settings(); default_date=settings.get("order_date") or datetime.now().strftime("%Y-%m-%d")
   for i,location in enumerate(list_collection("locations",True)):
    save_schedule(f"schedule-{i+1}",{"date":default_date,"location_id":location["id"],"location_name":location["name"],"pickup_slots":pickup_slots_for(location),"active":True,"sort":location.get("sort",i+1)})
+ settings=get_settings()
+ if "膳雞坊" in settings.get("headline",""):save_settings({"headline":settings["headline"].replace("膳雞坊","膳雉坊")})
+ for store in list_collection("stores"):
+  if store.get("name")=="膳雞坊":save_item("stores",store["id"],{"name":"膳雉坊"})
+ for meal in list_collection("meals"):
+  if meal.get("store")=="膳雞坊":save_item("meals",meal["id"],{"store":"膳雉坊"})
  ensure_stores()
  ensure_availability_model()
 
@@ -393,7 +399,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
  if not get_settings().get("ordering_open",True):return render(request,"message.html",title="目前已截止訂餐",message="請等待下一次菜單開放。")
  phone=re.sub(r"\D","",phone)
  if not re.fullmatch(r"09\d{8}",phone):return render(request,"message.html",title="手機號碼格式錯誤",message="請輸入正確的 10 碼手機號碼。")
- if invoice_type!="receipt":return render(request,"message.html",title="憑證方式錯誤",message="膳雞坊目前僅提供收據。")
+ if invoice_type!="receipt":return render(request,"message.html",title="憑證方式錯誤",message="膳雉坊目前僅提供收據。")
  if payment_method not in {"onsite","line_pay"}:return render(request,"message.html",title="付款方式錯誤",message="請重新選擇付款方式。")
  if payment_method=="line_pay" and not line_pay_configured():return render(request,"message.html",title="LINE Pay 尚未開放",message="測試金鑰尚未設定，請先使用現場付款。")
  checkout_token=checkout_token.strip()
@@ -429,7 +435,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
   return render(request,"message.html",title="這次付款未完成",message=f"訂單 {oid} 已取消或付款未成功；如要重新訂購，請返回菜單調整購物車後再送出。")
  if payment_method=="line_pay":
   base_url=str(request.base_url).rstrip("/")
-  payload={"amount":total,"currency":"TWD","orderId":oid,"packages":[{"id":oid,"amount":total,"name":"膳雞坊線上訂餐","products":[{"id":item["meal_id"],"name":item["name"][:100],"quantity":item["qty"],"price":item["price"]} for item in items]}],"redirectUrls":{"confirmUrl":f"{base_url}/linepay/confirm?order_id={urllib.parse.quote(oid)}","cancelUrl":f"{base_url}/linepay/cancel?order_id={urllib.parse.quote(oid)}"}}
+  payload={"amount":total,"currency":"TWD","orderId":oid,"packages":[{"id":oid,"amount":total,"name":"膳雉坊線上訂餐","products":[{"id":item["meal_id"],"name":item["name"][:100],"quantity":item["qty"],"price":item["price"]} for item in items]}],"redirectUrls":{"confirmUrl":f"{base_url}/linepay/confirm?order_id={urllib.parse.quote(oid)}","cancelUrl":f"{base_url}/linepay/cancel?order_id={urllib.parse.quote(oid)}"}}
   try:result=line_pay_request("/v3/payments/request",payload)
   except RuntimeError as exc:
    update_order(oid,{"payment_status":"request_failed","status":"cancelled","payment_error":str(exc),"updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="LINE Pay 付款建立失敗",message=f"訂單編號 {oid} 未付款且已自動取消，請返回菜單重新下單。")
@@ -516,7 +522,7 @@ async def line_webhook(request:Request):
     expected_text=f"啟用訂單通知 {pairing_code}" if pairing_code else ""
     if not settings.get("line_group_id") and expected_text and event["message"].get("text","").strip()==expected_text:
      save_settings({"line_group_id":group_id,"line_group_connected_at":datetime.now(timezone.utc).isoformat(),"line_pairing_code":""})
-     push_line_message(group_id,"✅ 膳雞坊訂單通知已連接\n之後有新訂單時，系統會自動通知此群組。")
+     push_line_message(group_id,"✅ 膳雉坊訂單通知已連接\n之後有新訂單時，系統會自動通知此群組。")
  return {"ok":True}
 
 @app.get("/orders/{oid}/success",response_class=HTMLResponse)
