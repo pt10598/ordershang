@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>訂單查詢｜膳雞坊</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static',path='/style.css') }}">
+</head>
+<body class="lookup-page">
+  <header class="topbar">
+    <a class="brand" href="/"><img class="brand-logo" src="{{ url_for('static',path='/shanzhifang-logo.jpg') }}" alt="膳雞坊"><span><strong>膳雞坊</strong><small>SHAN ZHI FANG</small></span></a>
+    <span class="top-note">訂單進度查詢</span>
+  </header>
+  <main class="lookup-main">
+    <section class="lookup-card">
+      <span class="eyebrow">ORDER LOOKUP</span>
+      <h1>查詢我的訂單</h1>
+      <p>輸入下單時填寫的手機號碼，即可查看訂單內容與處理狀態。</p>
+      <form method="post" action="/order-lookup" class="lookup-form">
+        <label for="lookupPhone">手機號碼</label>
+        <div><input id="lookupPhone" name="phone" value="{{ phone }}" inputmode="tel" autocomplete="tel" maxlength="12" placeholder="0912345678" required><button type="submit">查詢訂單</button></div>
+      </form>
+      {% if error %}<div class="lookup-error">{{ error }}</div>{% endif %}
+      {% if success %}<div class="lookup-success">{{ success }}</div>{% endif %}
+    </section>
+
+    {% if searched %}
+    <section class="lookup-results">
+      <div class="lookup-heading"><h2>查詢結果</h2><span>共 {{ orders|length }} 筆</span></div>
+      {% for order in orders %}
+      <article class="customer-order-card">
+        <div class="customer-order-head"><div><small>訂單編號</small><strong>{{ order.id }}</strong><small>下單時間：{{ order.created_at|tw_datetime }}</small></div><span class="status status-{{ order.status }}">{{ {'new':'新訂單','confirmed':'已確認','completed':'已完成','picked_up':'已取餐','cancelled':'已取消'}.get(order.status,order.status) }}</span></div>
+        <div class="customer-order-info"><div><span>取餐日期</span><b>{{ order.pickup_date }}</b></div><div><span>取餐地點</span><b>{{ order.location_name }}</b></div><div><span>取餐時間</span><b>{{ order.pickup_time }}</b></div><div><span>付款</span><b>{{ {'paid':'LINE Pay 已付款','pending':'LINE Pay 付款中','verification_pending':'LINE Pay 結果待確認','failed':'LINE Pay 未成功','request_failed':'LINE Pay 建立失敗','cancelled':'LINE Pay 已取消'}.get(order.payment_status,'LINE Pay 待付款') if order.payment_method=='line_pay' else '現場付款' }}</b></div><div><span>發票</span><b>{{ order.invoice_label|default('實體發票',true) }}{% if order.invoice_status=='pending' %}・待開立{% endif %}</b></div></div>
+        <ul>{% for item in order['items'] %}<li><span>{{ item.name }} × {{ item.qty }}</span><b>NT$ {{ item.subtotal }}</b></li>{% endfor %}</ul>
+        {% if order.note %}<p class="customer-order-note">備註：{{ order.note }}</p>{% endif %}
+        <div class="customer-order-total"><span>訂單金額</span><strong>NT$ {{ order.total }}</strong></div>
+        {% if order.status not in ['picked_up','cancelled'] %}<form method="post" action="/orders/{{ order.id }}/cancel" class="customer-cancel-form" onsubmit="return confirm('確定要取消訂單 {{ order.id }} 嗎？取消後無法自行恢復。')"><input type="hidden" name="phone" value="{{ phone }}"><input type="hidden" name="cancel_token" value="{{ order.cancel_token }}"><button type="submit">取消這筆訂單</button></form>{% endif %}
+      </article>
+      {% else %}<div class="lookup-empty"><strong>找不到訂單</strong><p>請確認手機號碼是否與下單時填寫的一致。</p></div>{% endfor %}
+    </section>
+    {% endif %}
+  </main>
+  <nav class="bottom-nav"><a href="/"><span>⌂</span>點餐</a><a href="/"><span>▤</span>購物車</a><a class="active" href="/order-lookup"><span>⌕</span>訂單查詢</a></nav>
+</body>
+</html>

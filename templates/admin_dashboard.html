@@ -1,0 +1,52 @@
+{% extends "base_admin.html" %}
+{% block title %}訂單管理｜膳雞坊{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><span class="eyebrow">ORDER DESK</span><h1>訂單管理</h1></div>
+  <div class="metric"><strong>{{ new_count }}</strong><span>筆新訂單</span></div>
+</div>
+{% if not database_connected %}<div class="alert">目前未連接 Firestore，資料只會暫存在主機記憶體。</div>{% endif %}
+
+<section class="panel order-tools"><form method="get" action="/admin" class="filter-form">
+  <label>開始日期<input type="date" name="start_date" value="{{ filters.start_date }}"></label>
+  <label>開始時間<input type="time" name="start_time" value="{{ filters.start_time }}"></label>
+  <label>結束日期<input type="date" name="end_date" value="{{ filters.end_date }}"></label>
+  <label>結束時間<input type="time" name="end_time" value="{{ filters.end_time }}"></label>
+  <label>狀態<select name="status"><option value="">全部狀態</option><option value="new" {% if filters.status=='new' %}selected{% endif %}>新訂單</option><option value="confirmed" {% if filters.status=='confirmed' %}selected{% endif %}>已確認</option><option value="completed" {% if filters.status=='completed' %}selected{% endif %}>已完成</option><option value="picked_up" {% if filters.status=='picked_up' %}selected{% endif %}>已取餐</option><option value="cancelled" {% if filters.status=='cancelled' %}selected{% endif %}>已取消</option></select></label>
+  <label>搜尋<input name="search" value="{{ filters.search }}" placeholder="姓名、手機、編號、地點"></label>
+  <label>排序<select name="sort"><option value="newest" {% if filters.sort=='newest' %}selected{% endif %}>下單時間：新到舊</option><option value="oldest" {% if filters.sort=='oldest' %}selected{% endif %}>下單時間：舊到新</option><option value="pickup" {% if filters.sort=='pickup' %}selected{% endif %}>取餐時間</option><option value="total_desc" {% if filters.sort=='total_desc' %}selected{% endif %}>金額：高到低</option></select></label>
+  <div class="filter-actions"><button class="primary" name="view" value="{{ filters.view }}">套用查詢</button><a href="/admin">清除</a></div>
+  <div class="view-switch"><span>顯示方式</span><button name="view" value="cards" class="{% if filters.view=='cards' %}active{% endif %}">卡片式</button><button name="view" value="table" class="{% if filters.view=='table' %}active{% endif %}">條列表格</button></div>
+</form></section>
+
+<div class="summary-metrics"><div><span>篩選訂單</span><strong>{{ summary['orders'] }}</strong></div><div><span>餐點總數</span><strong>{{ summary['items'] }}</strong></div><div><span>訂單總額</span><strong>NT$ {{ summary['revenue'] }}</strong></div></div>
+
+{% if filters.view=='table' %}
+<div class="report-layout">
+  <section class="panel report-table-panel" title="可拖曳右下角調整大小"><div class="table-scroll"><table class="order-table">
+    <thead><tr><th><button type="button" class="table-sort" data-type="date">下單時間</button></th><th><button type="button" class="table-sort">訂購人</button></th><th><button type="button" class="table-sort">訂單編號</button></th><th><button type="button" class="table-sort">餐廳</button></th><th><button type="button" class="table-sort">品項</button></th><th><button type="button" class="table-sort" data-type="number">數量</button></th><th><button type="button" class="table-sort" data-type="number">餐點小計</button></th><th><button type="button" class="table-sort" data-type="number">訂單總計</button></th><th><button type="button" class="table-sort">取餐資訊</button></th><th><button type="button" class="table-sort">發票</button></th><th><button type="button" class="table-sort">狀態</button></th></tr></thead>
+    <tbody>{% for order in orders %}<tr>
+      <td class="nowrap" data-sort-value="{{ order.created_at }}">{{ order.created_at|tw_datetime }}</td>
+      <td class="customer-cell" data-sort-value="{{ order.customer_name }}"><b>{{ order.customer_name }}</b><a href="tel:{{ order.phone }}">{{ order.phone }}</a></td>
+      <td class="nowrap" data-sort-value="{{ order.id }}">{{ order.id }}</td>
+      <td class="order-item-stores" data-sort-value="{{ order['items'][0].display_store if order['items'] else '' }}">{% for item in order['items'] %}<div class="order-item-row"><span class="restaurant-tag">{{ item.display_store }}</span></div>{% endfor %}</td>
+      <td class="order-item-names" data-sort-value="{{ order['items'][0].name if order['items'] else '' }}">{% for item in order['items'] %}<div class="order-item-row">{{ item.name }}</div>{% endfor %}</td>
+      <td class="order-item-qtys" data-sort-value="{{ order['items']|sum(attribute='qty') }}">{% for item in order['items'] %}<div class="order-item-row">{{ item.qty }}</div>{% endfor %}</td>
+      <td class="order-item-subtotals" data-sort-value="{{ order.total }}">{% for item in order['items'] %}<div class="order-item-row nowrap">NT$ {{ item.subtotal }}</div>{% endfor %}</td>
+      <td class="nowrap" data-sort-value="{{ order.total }}">NT$ {{ order.total }}</td>
+      <td class="pickup-info-cell" data-sort-value="{{ order.pickup_date }} {{ order.pickup_time }} {{ order.location_name }}"><span>{{ order.pickup_date }}</span><span>{{ order.location_name }}</span><span>{{ order.pickup_time }}</span></td>
+      <td data-sort-value="{{ order.invoice_label|default('實體發票',true) }}">{{ order.invoice_label|default('實體發票',true) }}<small>{{ {'paid':'LINE Pay 已付款','pending':'LINE Pay 付款中','verification_pending':'LINE Pay 結果待確認','failed':'LINE Pay 未成功','request_failed':'LINE Pay 建立失敗','cancelled':'LINE Pay 已取消'}.get(order.payment_status,'LINE Pay 待付款') if order.payment_method=='line_pay' else '現場付款' }}</small>{% if order.invoice_status=='pending' %}<small>發票：待開立</small>{% endif %}</td>
+      <td data-sort-value="{{ order.status }}"><form method="post" action="/admin/orders/{{ order.id }}/status" class="table-status-form"><select class="status-select" name="status"><option value="new" {% if order.status=='new' %}selected{% endif %}>新訂單</option><option value="confirmed" {% if order.status=='confirmed' %}selected{% endif %}>已確認</option><option value="completed" {% if order.status=='completed' %}selected{% endif %}>已完成</option><option value="picked_up" {% if order.status=='picked_up' %}selected{% endif %}>已取餐</option><option value="cancelled" {% if order.status=='cancelled' %}selected{% endif %}>已取消</option></select><button>更新</button></form>{% if order.updated_by %}<small>最後更新：{{ order.updated_by }}<br>{{ order.updated_at|tw_datetime }}</small>{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="11" class="table-empty">目前條件沒有訂單。</td></tr>{% endfor %}</tbody>
+  </table></div><span class="resize-hint">拖曳右下角可調整大小</span></section>
+  <aside class="panel item-summary"><h2>餐點數量統計</h2><div class="item-summary-list">{% for name,qty in summary['item_counts'] %}<div><span>{{ name }}</span><b>{{ qty }}</b></div>{% else %}<p>目前沒有資料。</p>{% endfor %}</div><div class="item-summary-total"><span>總計</span><strong>{{ summary['items'] }}</strong></div></aside>
+</div>
+{% else %}
+<div class="order-list">{% for order in orders %}<article class="order-card">
+  <div class="order-title"><div><small>#{{ order.id }}</small><h2>{{ order.customer_name }} <a href="tel:{{ order.phone }}">{{ order.phone }}</a></h2><small>下單：{{ order.created_at|tw_datetime }}</small></div><span class="status status-{{ order.status }}">{{ {'new':'新訂單','confirmed':'已確認','completed':'已完成','picked_up':'已取餐','cancelled':'已取消'}.get(order.status,order.status) }}</span></div>
+  <p><b>{{ order.pickup_date }}</b>・{{ order.location_name }}・{{ order.pickup_time }}</p><p>付款：{{ {'paid':'LINE Pay 已付款','pending':'LINE Pay 付款中','verification_pending':'LINE Pay 結果待確認','failed':'LINE Pay 未成功','request_failed':'LINE Pay 建立失敗','cancelled':'LINE Pay 已取消'}.get(order.payment_status,'LINE Pay 待付款') if order.payment_method=='line_pay' else '現場付款' }}｜發票：{{ order.invoice_label|default('實體發票',true) }}{% if order.invoice_status=='pending' %}（待開立）{% endif %}</p>
+  <ul>{% for item in order['items'] %}<li><span><small class="restaurant-name">{{ item.display_store }}</small>{{ item.name }} × {{ item.qty }}</span><b>NT$ {{ item.subtotal }}</b></li>{% endfor %}</ul>{% if order.note %}<div class="note">備註：{{ order.note }}</div>{% endif %}
+  <div class="order-foot"><strong>合計 NT$ {{ order.total }}</strong><div>{% if order.updated_by %}<small>最後更新：{{ order.updated_by }}・{{ order.updated_at|tw_datetime }}</small>{% endif %}<form method="post" action="/admin/orders/{{ order.id }}/status"><select class="status-select" name="status"><option value="new" {% if order.status=='new' %}selected{% endif %}>新訂單</option><option value="confirmed" {% if order.status=='confirmed' %}selected{% endif %}>已確認</option><option value="completed" {% if order.status=='completed' %}selected{% endif %}>已完成</option><option value="picked_up" {% if order.status=='picked_up' %}selected{% endif %}>已取餐</option><option value="cancelled" {% if order.status=='cancelled' %}selected{% endif %}>已取消</option></select><button>更新狀態</button></form></div></div>
+</article>{% else %}<div class="empty-admin">目前條件沒有訂單。</div>{% endfor %}</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base_admin.html" %}
+{% block title %}餐點管理｜膳雞坊{% endblock %}
+{% block content %}
+{% set options = editing.options|default([], true) if editing else [] %}
+<div class="page-head"><div><span class="eyebrow">MENU</span><h1>餐點管理</h1></div></div>
+<div class="admin-grid">
+  <section class="panel">
+    <h2>{{ '修改餐點' if editing else '新增餐點' }}</h2>
+    <form method="post" action="/admin/menu/save" enctype="multipart/form-data" class="admin-form">
+      <input type="hidden" name="meal_id" value="{{ editing.id if editing else '' }}">
+      <label>餐點名稱<input name="name" value="{{ editing.name if editing else '' }}" required></label>
+      <div class="two"><label>所屬店家<select name="store_id" required>{% for store in stores if store.active or (editing and store.id==editing.store_id) %}<option value="{{ store.id }}" {% if editing and (store.id==editing.store_id or (not editing.store_id and store.name==editing.store)) %}selected{% endif %}>{{ store.name }}</option>{% endfor %}</select><small>店家請至「訂餐設定」新增。</small></label><label>分類<input name="category" value="{{ editing.category if editing else '' }}" required></label></div>
+      <label>餐點說明<textarea name="description">{{ editing.description if editing else '' }}</textarea></label>
+      <div class="two"><label>基本價格<input type="number" name="price" min="0" value="{{ editing.price if editing else 0 }}" required><small>沒有設定規格時使用。</small></label><label>排序<input type="number" name="sort" value="{{ editing.sort if editing else 99 }}"></label></div>
+      <fieldset class="menu-fieldset"><legend>餐點規格（選填，最多兩種）</legend><p>有填規格名稱時，前台會要求客人選擇規格，並使用該規格價格。</p>
+        <div class="option-row"><label>規格一<input name="option_1_name" placeholder="例如：1/4 隻" value="{{ options[0].name if options|length > 0 else '' }}"></label><label>價格<input type="number" name="option_1_price" min="0" value="{{ options[0].price if options|length > 0 else 0 }}"></label></div>
+        <div class="option-row"><label>規格二<input name="option_2_name" placeholder="例如：半隻" value="{{ options[1].name if options|length > 1 else '' }}"></label><label>價格<input type="number" name="option_2_price" min="0" value="{{ options[1].price if options|length > 1 else 0 }}"></label></div>
+      </fieldset>
+      <label>圖片網址<input name="image_url" value="{{ editing.image_url if editing and editing.image_url|default('') and not editing.image_url.startswith('data:') else '' }}"></label>
+      <label>或上傳圖片<input type="file" name="image_file" accept="image/jpeg,image/png,image/webp"><small>未設定 Cloudinary 時，系統會自動縮圖並保存到 Firestore。</small></label>
+      <label class="check"><input type="checkbox" name="active" {% if not editing or editing.active %}checked{% endif %}> 上架此餐點</label>
+      <button class="primary">儲存餐點</button>{% if editing %}<a class="secondary" href="/admin/menu">取消修改</a>{% endif %}
+    </form>
+  </section>
+  <section class="panel"><h2>目前餐點</h2><div class="manage-list">
+    {% for meal in meals %}<div class="manage-row"><img src="{{ meal.image_url or url_for('static',path='/meal-placeholder.svg') }}" onerror="this.onerror=null;this.src='{{ url_for('static',path='/meal-placeholder.svg') }}'" alt="{{ meal.name }}"><div><b>{{ meal.name }}</b><span>{{ meal.store }}・{% if meal.options %}{{ meal.options|map(attribute='name')|join('／') }}{% else %}NT$ {{ meal.price }}{% endif %}</span><small>供應地點依所屬餐廳設定</small></div><span class="visibility">{{ '上架' if meal.active else '下架' }}</span><a href="/admin/menu?edit={{ meal.id }}">修改</a><form method="post" action="/admin/menu/{{ meal.id }}/toggle"><button>{{ '下架' if meal.active else '上架' }}</button></form></div>{% endfor %}
+  </div></section>
+</div>
+{% endblock %}
