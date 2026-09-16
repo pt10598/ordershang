@@ -132,9 +132,25 @@ function updateLocations() {
   updateAvailability();
 }
 
+function taipeiDateTime() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+  }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  return {date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}`};
+}
+
+function availablePickupSlots() {
+  const config = selectedDateConfig();
+  if (!config) return [];
+  const now = taipeiDateTime();
+  if (config.date < now.date) return [];
+  return (config.pickup_slots || []).filter(slot => config.date > now.date || slot > now.time);
+}
+
 function updateTimes() {
   const previous = timeSelect.value;
-  const slots = selectedDateConfig()?.pickup_slots || [];
+  const slots = availablePickupSlots();
   timeSelect.replaceChildren(...slots.map(slot => new Option(slot, slot)));
   if (slots.includes(previous)) timeSelect.value = previous;
   updateLocations();
@@ -145,6 +161,7 @@ timeSelect.addEventListener('change', updateLocations);
 locationSelect.addEventListener('change', updateAvailability);
 [dateSelect, timeSelect, locationSelect].forEach(field => field.addEventListener('change', invalidateCheckoutToken));
 updateTimes();
+window.setInterval(updateTimes, 60000);
 
 document.querySelectorAll('.date').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.date').forEach(item => item.classList.remove('active'));

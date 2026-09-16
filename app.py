@@ -39,6 +39,11 @@ def format_taipei_datetime(value):
 
 templates.env.filters["tw_datetime"]=format_taipei_datetime
 
+def pickup_slot_is_future(date_value,slot_value,now=None):
+ try:pickup_at=datetime.strptime(f"{date_value} {slot_value}","%Y-%m-%d %H:%M").replace(tzinfo=TAIPEI_TZ)
+ except (TypeError,ValueError):return False
+ return pickup_at>(now or datetime.now(TAIPEI_TZ))
+
 DEFAULT_MEALS = []
 DEFAULT_LOCATIONS = []
 DEFAULT_STORES = [
@@ -401,7 +406,11 @@ async def startup():seed_database()
 
 @app.get("/",response_class=HTMLResponse)
 async def home(request:Request):
- data=get_home_data()
+ cached=get_home_data(); now=datetime.now(TAIPEI_TZ); data={**cached}
+ data["pickup_dates"]=[]
+ for config in cached["pickup_dates"]:
+  available_slots=[slot for slot in config.get("pickup_slots") or [] if pickup_slot_is_future(config.get("date"),slot,now)]
+  if available_slots:data["pickup_dates"].append({**config,"pickup_slots":available_slots})
  return render(request,"index.html",**data,line_pay_configured=line_pay_configured(),line_pay_sandbox=os.getenv("LINE_PAY_ENV","sandbox").lower()!="production")
 
 @app.get("/order-lookup",response_class=HTMLResponse)
@@ -449,6 +458,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
  location=get_item("locations",location_id)
  selected_slot_key=slot_key(pickup_date,pickup_time)
  if not date_config or pickup_time not in (date_config.get("pickup_slots") or []):return render(request,"message.html",title="取餐時間無效",message="請重新選擇開放中的取餐日期與時間。")
+ if not pickup_slot_is_future(pickup_date,pickup_time):return render(request,"message.html",title="取餐時間已截止",message="這個取餐時間已經超過，請返回菜單重新選擇其他時間。")
  if not location or not location.get("active",True) or (location.get("availability_configured") and selected_slot_key not in (location.get("slot_keys") or [])):return render(request,"message.html",title="訂單沒有送出",message="這個取餐地點目前未開放所選時段，請重新選擇。")
  items=[]; total=0
  for row in requested:
