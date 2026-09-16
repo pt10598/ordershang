@@ -699,7 +699,16 @@ async def admin_settings(request:Request):
  configured=line_configured()
  if configured:ensure_line_pairing_code()
  ensure_availability_model()
- return render(request,"admin_settings.html",settings=get_settings(),pickup_dates=list_collection("pickup_dates"),locations=list_collection("locations"),stores=list_collection("stores"),line_configured=configured)
+ pickup_dates=list_collection("pickup_dates"); locations=list_collection("locations")
+ for location in locations:
+  period_keys=set()
+  for key in location.get("slot_keys") or []:
+   try:key_date,key_slot=key.split("|",1)
+   except ValueError:continue
+   if key_slot in MORNING_PICKUP_SLOTS:period_keys.add(f"{key_date}|morning")
+   if key_slot in AFTERNOON_PICKUP_SLOTS:period_keys.add(f"{key_date}|afternoon")
+  location["period_keys"]=sorted(period_keys)
+ return render(request,"admin_settings.html",settings=get_settings(),pickup_dates=pickup_dates,locations=locations,stores=list_collection("stores"),line_configured=configured)
 
 @app.post("/admin/settings")
 async def settings_save(request:Request,headline:str=Form(...),ordering_open:str|None=Form(None)):
@@ -730,10 +739,19 @@ async def schedule_save(request:Request,schedule_id:str=Form(""),date:str=Form(.
  return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/locations/save")
-async def location_save(request:Request,location_id:str=Form(""),name:str=Form(...),pickup_slots:str=Form(""),slot_keys:list[str]=Form([]),active:str|None=Form(None),sort:int=Form(99)):
+async def location_save(request:Request,location_id:str=Form(""),name:str=Form(...),pickup_slots:str=Form(""),slot_keys:list[str]=Form([]),period_keys:list[str]=Form([]),active:str|None=Form(None),sort:int=Form(99)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- valid_keys={slot_key(config.get("date",""),slot) for config in list_collection("pickup_dates") for slot in config.get("pickup_slots") or []}
- selected_keys=sorted({key for key in slot_keys if key in valid_keys})
+ date_configs={config.get("date",""):config for config in list_collection("pickup_dates")}
+ valid_keys={slot_key(date,slot) for date,config in date_configs.items() for slot in config.get("pickup_slots") or []}
+ selected_keys={key for key in slot_keys if key in valid_keys}
+ for period_key in period_keys:
+  try:period_date,period=period_key.split("|",1)
+  except ValueError:continue
+  config=date_configs.get(period_date)
+  if not config:continue
+  period_slots=MORNING_PICKUP_SLOTS if period=="morning" else AFTERNOON_PICKUP_SLOTS if period=="afternoon" else []
+  selected_keys.update(slot_key(period_date,slot) for slot in period_slots if slot in (config.get("pickup_slots") or []))
+ selected_keys=sorted(selected_keys)
  location_id=location_id or f"loc-{secrets.token_hex(4)}"; save_item("locations",location_id,{"name":name.strip(),"slot_keys":selected_keys,"availability_configured":True,"active":active=="on","sort":sort}); return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/locations/{location_id}/toggle")
