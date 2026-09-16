@@ -44,13 +44,24 @@ DEFAULT_LOCATIONS = []
 DEFAULT_STORES = [
  {"id":"store-shanzhifang","name":"膳雉坊","logo_url":"/static/shanzhifang-logo.jpg","active":True,"sort":1},
 ]
-DEFAULT_PICKUP_SLOTS=["11:30","12:00","12:30"]
+def make_time_slots(start_hour,start_minute,end_hour,end_minute):
+ current=datetime(2000,1,1,start_hour,start_minute); end=datetime(2000,1,1,end_hour,end_minute); slots=[]
+ while current<=end:
+  slots.append(current.strftime("%H:%M")); current+=timedelta(minutes=10)
+ return slots
+
+MORNING_PICKUP_SLOTS=make_time_slots(11,0,14,0)
+AFTERNOON_PICKUP_SLOTS=make_time_slots(16,30,19,30)
+DEFAULT_PICKUP_SLOTS=MORNING_PICKUP_SLOTS+AFTERNOON_PICKUP_SLOTS
+
+def fixed_pickup_slots(morning_open=True,afternoon_open=True):
+ return (MORNING_PICKUP_SLOTS if morning_open else [])+(AFTERNOON_PICKUP_SLOTS if afternoon_open else [])
 
 class MemoryStore:
  def __init__(self):
   self.meals={x["id"]:x.copy() for x in DEFAULT_MEALS}; self.locations={x["id"]:x.copy() for x in DEFAULT_LOCATIONS}; self.stores={x["id"]:x.copy() for x in DEFAULT_STORES}; self.orders={}
   self.settings={"order_date":datetime.now().strftime("%Y-%m-%d"),"headline":"膳雉坊・美味現點","ordering_open":True}
-  self.pickup_dates={"date-default":{"id":"date-default","date":self.settings["order_date"],"pickup_slots":DEFAULT_PICKUP_SLOTS,"active":True,"sort":1}}
+  self.pickup_dates={"date-default":{"id":"date-default","date":self.settings["order_date"],"pickup_slots":DEFAULT_PICKUP_SLOTS,"morning_open":True,"afternoon_open":True,"fixed_periods_v1":True,"active":True,"sort":1}}
   self.schedules={f"schedule-{i+1}":{"id":f"schedule-{i+1}","date":self.settings["order_date"],"location_id":x["id"],"location_name":x["name"],"pickup_slots":x["pickup_slots"],"active":True,"sort":x["sort"]} for i,x in enumerate(DEFAULT_LOCATIONS)}
 memory=MemoryStore()
 HOME_CACHE={"data":None,"expires_at":0.0}
@@ -329,6 +340,32 @@ def ensure_availability_model():
    if not schedule.get("stores_configured") or store["id"] in (schedule.get("store_ids") or []):linked.add(schedule.get("location_id"))
   save_item("stores",store["id"],{"location_ids":sorted(item for item in linked if item) or all_location_ids,"locations_configured":True})
 
+def ensure_fixed_pickup_periods():
+ """Migrate older manually entered times to the fixed morning/afternoon periods once."""
+ migrations={}
+ for config in list_collection("pickup_dates"):
+  if config.get("fixed_periods_v1"):continue
+  old_slots=set(config.get("pickup_slots") or [])
+  morning_open=any(slot in old_slots for slot in MORNING_PICKUP_SLOTS) if old_slots else True
+  afternoon_open=any(slot in old_slots for slot in AFTERNOON_PICKUP_SLOTS) if old_slots else True
+  new_slots=fixed_pickup_slots(morning_open,afternoon_open)
+  migrations[config.get("date","")]={"old":old_slots,"new":set(new_slots),"morning":morning_open,"afternoon":afternoon_open}
+  save_item("pickup_dates",config["id"],{"pickup_slots":new_slots,"morning_open":morning_open,"afternoon_open":afternoon_open,"fixed_periods_v1":True,"active":config.get("active",True) and bool(new_slots)})
+ if not migrations:return
+ for location in list_collection("locations"):
+  keys=set(location.get("slot_keys") or []); changed=False
+  for date,migration in migrations.items():
+   date_prefix=f"{date}|"; existing={key for key in keys if key.startswith(date_prefix)}
+   if not existing:continue
+   keys-=existing
+   selected_slots={key.split("|",1)[1] for key in existing}
+   use_morning=any(slot in MORNING_PICKUP_SLOTS for slot in selected_slots)
+   use_afternoon=any(slot in AFTERNOON_PICKUP_SLOTS for slot in selected_slots)
+   if use_morning and migration["morning"]:keys.update(slot_key(date,slot) for slot in MORNING_PICKUP_SLOTS)
+   if use_afternoon and migration["afternoon"]:keys.update(slot_key(date,slot) for slot in AFTERNOON_PICKUP_SLOTS)
+   changed=True
+  if changed:save_item("locations",location["id"],{"slot_keys":sorted(keys)})
+
 def seed_database():
  if not db:
   ensure_stores(); ensure_availability_model(); return
@@ -351,6 +388,7 @@ def seed_database():
   if meal.get("store")=="膳雞坊":save_item("meals",meal["id"],{"store":"膳雉坊"})
  ensure_stores()
  ensure_availability_model()
+ ensure_fixed_pickup_periods()
 
 def is_admin(request):return request.session.get("admin") is True
 def render(request,name,**context):return templates.TemplateResponse(request=request,name=name,context=context)
@@ -659,16 +697,13 @@ async def settings_save(request:Request,headline:str=Form(...),ordering_open:str
  save_settings({"headline":headline.strip(),"ordering_open":ordering_open=="on"}); return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/pickup-dates/save")
-async def pickup_date_save(request:Request,pickup_date_id:str=Form(""),date:str=Form(...),pickup_slots:str=Form(...),active:str|None=Form(None),sort:int=Form(99)):
+async def pickup_date_save(request:Request,pickup_date_id:str=Form(""),date:str=Form(...),morning_open:str|None=Form(None),afternoon_open:str|None=Form(None),active:str|None=Form(None),sort:int=Form(99)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
- slots=[]
- for value in pickup_slots.replace("，",",").replace(".",",").split(","):
-  value=value.strip()
-  if re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d",value) and value not in slots:slots.append(value)
- if not slots:return RedirectResponse("/admin/settings",status_code=303)
+ morning_enabled=morning_open=="on"; afternoon_enabled=afternoon_open=="on"
+ slots=fixed_pickup_slots(morning_enabled,afternoon_enabled)
  existing=next((item for item in list_collection("pickup_dates") if item.get("date")==date),None)
  pickup_date_id=pickup_date_id or (existing["id"] if existing else f"date-{secrets.token_hex(4)}")
- save_item("pickup_dates",pickup_date_id,{"date":date,"pickup_slots":sorted(slots),"active":active=="on","sort":sort})
+ save_item("pickup_dates",pickup_date_id,{"date":date,"pickup_slots":slots,"morning_open":morning_enabled,"afternoon_open":afternoon_enabled,"fixed_periods_v1":True,"active":active=="on" and bool(slots),"sort":sort})
  return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/schedules/save")
