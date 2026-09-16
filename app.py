@@ -472,8 +472,9 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
    option=next((item for item in options if item.get("name")==selected_option),None)
    if not option:continue
   price=int(option.get("price",0) if option else meal.get("price",0)); display_name=f"{meal['name']}（{option['name']}）" if option else meal["name"]
-  items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"store_id":meal.get("store_id",""),"store":meal.get("store",""),"option_name":option["name"] if option else "","price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
+  items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"store_id":meal.get("store_id",""),"store":meal.get("store",""),"store_sort":int(store.get("sort",999)),"meal_sort":int(meal.get("sort",999)),"option_name":option["name"] if option else "","price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
  if not items:return render(request,"message.html",title="訂單沒有送出",message="選擇的餐點在此日期或地點未供應，請重新選擇。")
+ items.sort(key=lambda item:(item.get("store_sort",999),item.get("meal_sort",999),item.get("name","")))
  now=datetime.now(timezone.utc).isoformat(); invoice_label="收據"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":location["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":"","tax_id":"","invoice_label":invoice_label,"invoice_status":"receipt","payment_method":payment_method,"payment_status":"pending" if payment_method=="line_pay" else "pay_on_pickup","checkout_token_hash":hashlib.sha256(checkout_token.encode()).hexdigest(),"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid,created=create_order_once(order,checkout_token)
  if not created:
   existing=get_order(oid) or {}
@@ -716,13 +717,23 @@ async def settings_save(request:Request,headline:str=Form(...),ordering_open:str
  save_settings({"headline":headline.strip(),"ordering_open":ordering_open=="on"}); return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/pickup-dates/save")
-async def pickup_date_save(request:Request,pickup_date_id:str=Form(""),date:str=Form(...),morning_open:str|None=Form(None),afternoon_open:str|None=Form(None),active:str|None=Form(None),sort:int=Form(99)):
+async def pickup_date_save(request:Request,pickup_date_id:str=Form(""),date:str=Form(""),dates:str=Form(""),morning_open:str|None=Form(None),afternoon_open:str|None=Form(None),active:str|None=Form(None),sort:int=Form(99)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  morning_enabled=morning_open=="on"; afternoon_enabled=afternoon_open=="on"
  slots=fixed_pickup_slots(morning_enabled,afternoon_enabled)
- existing=next((item for item in list_collection("pickup_dates") if item.get("date")==date),None)
- pickup_date_id=pickup_date_id or (existing["id"] if existing else f"date-{secrets.token_hex(4)}")
- save_item("pickup_dates",pickup_date_id,{"date":date,"pickup_slots":slots,"morning_open":morning_enabled,"afternoon_open":afternoon_enabled,"fixed_periods_v1":True,"active":active=="on" and bool(slots),"sort":sort})
+ selected_dates=[]
+ for value in ([date] if date else [])+dates.split(","):
+  value=value.strip()
+  try:parsed_date=datetime.strptime(value,"%Y-%m-%d").date()
+  except ValueError:continue
+  if parsed_date<datetime.now(TAIPEI_TZ).date():continue
+  if value not in selected_dates:selected_dates.append(value)
+ if not selected_dates:return RedirectResponse("/admin/settings",status_code=303)
+ existing_dates={item.get("date"):item for item in list_collection("pickup_dates")}
+ for index,selected_date in enumerate(sorted(selected_dates)):
+  existing=existing_dates.get(selected_date)
+  item_id=pickup_date_id if pickup_date_id and len(selected_dates)==1 else (existing["id"] if existing else f"date-{secrets.token_hex(4)}")
+  save_item("pickup_dates",item_id,{"date":selected_date,"pickup_slots":slots,"morning_open":morning_enabled,"afternoon_open":afternoon_enabled,"fixed_periods_v1":True,"active":active=="on" and bool(slots),"sort":sort+index})
  return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/schedules/save")

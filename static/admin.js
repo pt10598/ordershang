@@ -145,3 +145,113 @@ document.querySelectorAll('.order-table td, .order-card p').forEach(element => {
   button.addEventListener('click', () => showCarrierBarcode(value));
   element.appendChild(button);
 });
+
+const multiDatePicker = document.querySelector('#multiDatePicker');
+if (multiDatePicker) {
+  const selectedDates = new Set();
+  const valuesInput = document.querySelector('#multiDateValues');
+  const grid = multiDatePicker.querySelector('[data-calendar-grid]');
+  const title = multiDatePicker.querySelector('[data-calendar-title]');
+  const summary = multiDatePicker.querySelector('[data-calendar-summary]');
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let viewDate = new Date(today.getFullYear(), today.getMonth(), 1);
+  let rangeStart = null;
+
+  const toDateKey = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const fromDateKey = value => {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
+  function selectedRanges() {
+    const dates = [...selectedDates].sort();
+    if (!dates.length) return '尚未選擇日期';
+    const ranges = [];
+    let start = dates[0];
+    let end = dates[0];
+    for (const value of dates.slice(1)) {
+      const expected = fromDateKey(end);
+      expected.setDate(expected.getDate() + 1);
+      if (toDateKey(expected) === value) end = value;
+      else {
+        ranges.push(start === end ? start : `${start}～${end}`);
+        start = value;
+        end = value;
+      }
+    }
+    ranges.push(start === end ? start : `${start}～${end}`);
+    return `已選 ${dates.length} 天：${ranges.join('、')}`;
+  }
+
+  function syncSelectedDates() {
+    valuesInput.value = [...selectedDates].sort().join(',');
+    summary.textContent = rangeStart ? `開始日 ${rangeStart}，請再點選結束日` : selectedRanges();
+  }
+
+  function chooseDate(date) {
+    const key = toDateKey(date);
+    if (!rangeStart) {
+      if (selectedDates.has(key)) selectedDates.delete(key);
+      else {
+        selectedDates.add(key);
+        rangeStart = key;
+      }
+    } else {
+      let cursor = fromDateKey(rangeStart);
+      const end = fromDateKey(key);
+      if (cursor > end) [cursor] = [end];
+      const last = fromDateKey(rangeStart) > end ? fromDateKey(rangeStart) : end;
+      while (cursor <= last) {
+        if (cursor >= today) selectedDates.add(toDateKey(cursor));
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      rangeStart = null;
+    }
+    renderCalendar();
+  }
+
+  function renderCalendar() {
+    const year = viewDate.getFullYear();
+    const month = viewDate.getMonth();
+    title.textContent = `${year} 年 ${month + 1} 月`;
+    grid.replaceChildren();
+    const firstWeekday = new Date(year, month, 1).getDay();
+    for (let index = 0; index < firstWeekday; index += 1) grid.append(document.createElement('span'));
+    const days = new Date(year, month + 1, 0).getDate();
+    for (let day = 1; day <= days; day += 1) {
+      const date = new Date(year, month, day);
+      const key = toDateKey(date);
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = day;
+      button.disabled = date < today;
+      button.classList.toggle('selected', selectedDates.has(key));
+      button.classList.toggle('range-start', rangeStart === key);
+      button.addEventListener('click', () => chooseDate(date));
+      grid.append(button);
+    }
+    syncSelectedDates();
+  }
+
+  multiDatePicker.querySelector('[data-calendar-prev]').addEventListener('click', () => {
+    viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1);
+    renderCalendar();
+  });
+  multiDatePicker.querySelector('[data-calendar-next]').addEventListener('click', () => {
+    viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1);
+    renderCalendar();
+  });
+  multiDatePicker.querySelector('[data-calendar-clear]').addEventListener('click', () => {
+    selectedDates.clear();
+    rangeStart = null;
+    renderCalendar();
+  });
+  document.querySelector('#multiDateForm').addEventListener('submit', event => {
+    if (!selectedDates.size) {
+      event.preventDefault();
+      window.alert('請先在日曆選擇至少一個取餐日期。');
+    }
+  });
+  renderCalendar();
+}
