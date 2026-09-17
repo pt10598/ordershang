@@ -1,3 +1,3 @@
-<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}膳雉坊管理後台{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static',path='/admin.css') }}?v=238"></head><body>
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{% block title %}膳雉坊管理後台{% endblock %}</title><link rel="stylesheet" href="{{ url_for('static',path='/admin.css') }}?v=239"></head><body>
 <header class="admin-top"><a href="/admin" class="admin-brand">膳雉坊管理後台</a><nav><a href="/admin">訂單</a><a href="/admin/menu">餐點</a><a href="/admin/settings">地點與訂餐設定</a><form method="post" action="/admin/logout"><button>登出</button></form></nav></header>
 <main class="admin-main">{% block content %}{% endblock %}</main><script src="{{ url_for('static',path='/admin.js') }}?v=238"></script></body></html>

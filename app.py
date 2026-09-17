@@ -654,6 +654,13 @@ async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,
  safe_return=return_to if return_to.startswith("/admin") and not return_to.startswith("//") else "/admin"
  return RedirectResponse(safe_return,status_code=303)
 
+@app.get("/admin/orders/{oid}/print",response_class=HTMLResponse)
+async def admin_order_print(request:Request,oid:str,autoprint:int=0):
+ if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
+ order=get_order(oid)
+ if not order:return HTMLResponse("找不到訂單",status_code=404)
+ return render(request,"admin_order_print.html",order=order,autoprint=autoprint==1)
+
 @app.get("/admin/menu",response_class=HTMLResponse)
 async def admin_menu(request:Request,edit:str|None=None):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
