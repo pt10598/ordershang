@@ -255,3 +255,14 @@ if (multiDatePicker) {
   });
   renderCalendar();
 }
+const optionMultiple = document.querySelector('#optionMultiple');
+const optionSelectCountField = document.querySelector('#optionSelectCountField');
+if (optionMultiple && optionSelectCountField) {
+  const updateOptionMode = () => {
+    optionSelectCountField.hidden = !optionMultiple.checked;
+    const select = optionSelectCountField.querySelector('select');
+    if (select) select.disabled = !optionMultiple.checked;
+  };
+  optionMultiple.addEventListener('change', updateOptionMode);
+  updateOptionMode();
+}

@@ -251,12 +251,38 @@ document.querySelectorAll('.meal-option').forEach(select => {
   });
 });
 
+document.querySelectorAll('.meal-multi-options').forEach(group => {
+  const required = Number(group.dataset.selectCount || 1);
+  const checks = [...group.querySelectorAll('.meal-option-check')];
+  const update = changed => {
+    let selected = checks.filter(check => check.checked);
+    if (selected.length > required && changed) {
+      changed.checked = false;
+      selected = checks.filter(check => check.checked);
+      showToast(`這個餐點最多選 ${required} 項規格`);
+    }
+    group.querySelector('.meal-option-status').textContent = `已選 ${selected.length} / ${required}`;
+    group.closest('.meal-card').querySelector('.meal-price').textContent = `NT$ ${selected.reduce((sum, check) => sum + Number(check.dataset.price || 0), 0)}`;
+  };
+  checks.forEach(check => check.addEventListener('change', () => update(check)));
+  update();
+});
+
 document.querySelectorAll('.add-button').forEach(button => button.addEventListener('click', () => {
   const card = button.closest('.meal-card');
   const option = card.querySelector('.meal-option')?.selectedOptions[0];
-  const optionName = option?.value || '';
-  const key = `${button.dataset.id}::${optionName}`;
-  const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, price: Number(option?.dataset.price || button.dataset.price), qty: 0, storeId: card.dataset.storeId, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
+  const multiGroup = card.querySelector('.meal-multi-options');
+  const selectedChecks = multiGroup ? [...multiGroup.querySelectorAll('.meal-option-check:checked')] : [];
+  const required = Number(multiGroup?.dataset.selectCount || 0);
+  if (multiGroup && selectedChecks.length !== required) {
+    showToast(`請選滿 ${required} 項規格再加入`);
+    return;
+  }
+  const optionNames = multiGroup ? selectedChecks.map(check => check.value) : (option ? [option.value] : []);
+  const optionName = optionNames.join('＋');
+  const optionPrice = multiGroup ? selectedChecks.reduce((sum, check) => sum + Number(check.dataset.price || 0), 0) : Number(option?.dataset.price || button.dataset.price);
+  const key = `${button.dataset.id}::${optionNames.join('|')}`;
+  const current = cart.get(key) || {mealId: button.dataset.id, name: button.dataset.name, optionName, optionNames, price: optionPrice, qty: 0, storeId: card.dataset.storeId, locations: card.dataset.locations ? card.dataset.locations.split(',') : [], locationsConfigured: card.dataset.locationsConfigured === 'true'};
   const addQty = clampQty(card.querySelector('.meal-add-qty')?.value || 1);
   if (current.qty >= 99) {
     showToast('每個餐點最多99份');
@@ -275,7 +301,7 @@ document.querySelector('#checkoutButton').addEventListener('click', () => {
     showToast('請先選擇可下單的日期、時間與地點');
     return;
   }
-  document.querySelector('#itemsJson').value = JSON.stringify([...cart.values()].map(item => ({id: item.mealId, option_name: item.optionName, qty: item.qty})));
+  document.querySelector('#itemsJson').value = JSON.stringify([...cart.values()].map(item => ({id: item.mealId, option_name: item.optionName, option_names: item.optionNames || (item.optionName ? [item.optionName] : []), qty: item.qty})));
   document.querySelector('#orderLocation').value = locationSelect.value;
   document.querySelector('#orderDate').value = dateSelect.value;
   document.querySelector('#orderDateDisplay').value = dateSelect.value;

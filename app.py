@@ -467,12 +467,18 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
   store=get_item("stores",meal.get("store_id",""))
   if not store or not store.get("active",True):continue
   if store.get("locations_configured") and location_id not in (store.get("location_ids") or []):continue
-  options=meal.get("options") or []; selected_option=str(row.get("option_name","")).strip(); option=None
+  options=meal.get("options") or []; selected_options=[]
   if options:
-   option=next((item for item in options if item.get("name")==selected_option),None)
-   if not option:continue
-  price=int(option.get("price",0) if option else meal.get("price",0)); display_name=f"{meal['name']}（{option['name']}）" if option else meal["name"]
-  items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"store_id":meal.get("store_id",""),"store":meal.get("store",""),"store_sort":int(store.get("sort",999)),"meal_sort":int(meal.get("sort",999)),"option_name":option["name"] if option else "","price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
+   requested_names=row.get("option_names") if isinstance(row.get("option_names"),list) else [row.get("option_name","")]
+   requested_names=[str(value).strip() for value in requested_names if str(value).strip()]
+   requested_names=list(dict.fromkeys(requested_names))
+   option_map={str(item.get("name","")):item for item in options}
+   selected_options=[option_map[name] for name in requested_names if name in option_map]
+   required=max(1,min(int(meal.get("option_select_count",1)),len(options))) if meal.get("option_multiple") else 1
+   if len(selected_options)!=required or len(selected_options)!=len(requested_names):continue
+  option_name="＋".join(str(item.get("name","")) for item in selected_options)
+  price=sum(int(item.get("price",0)) for item in selected_options) if selected_options else int(meal.get("price",0)); display_name=f"{meal['name']}（{option_name}）" if option_name else meal["name"]
+  items.append({"meal_id":meal["id"],"name":display_name,"base_name":meal["name"],"store_id":meal.get("store_id",""),"store":meal.get("store",""),"store_sort":int(store.get("sort",999)),"meal_sort":int(meal.get("sort",999)),"option_name":option_name,"option_names":[item.get("name","") for item in selected_options],"price":price,"qty":qty,"subtotal":price*qty}); total+=price*qty
  if not items:return render(request,"message.html",title="訂單沒有送出",message="選擇的餐點在此日期或地點未供應，請重新選擇。")
  items.sort(key=lambda item:(item.get("store_sort",999),item.get("meal_sort",999),item.get("name","")))
  now=datetime.now(timezone.utc).isoformat(); invoice_label="收據"; order={"customer_name":customer_name.strip(),"phone":phone.strip(),"location_id":location_id,"location_name":location["name"],"pickup_time":pickup_time,"pickup_date":pickup_date,"invoice_type":invoice_type,"mobile_barcode":"","tax_id":"","invoice_label":invoice_label,"invoice_status":"receipt","payment_method":payment_method,"payment_status":"pending" if payment_method=="line_pay" else "pay_on_pickup","checkout_token_hash":hashlib.sha256(checkout_token.encode()).hexdigest(),"note":note.strip(),"items":items,"total":total,"status":"new","created_at":now,"updated_at":now}; oid,created=create_order_once(order,checkout_token)
@@ -675,7 +681,7 @@ async def upload_image(file):
   print(f"Image processing failed: {exc}"); return None
 
 @app.post("/admin/menu/save")
-async def menu_save(request:Request,meal_id:str=Form(""),name:str=Form(...),store_id:str=Form(...),category:str=Form(...),description:str=Form(""),price:int=Form(...),image_url:str=Form(""),image_file:UploadFile|None=None,active:str|None=Form(None),sort:int=Form(99),location_ids:list[str]=Form([]),option_1_name:str=Form(""),option_1_price:int=Form(0),option_2_name:str=Form(""),option_2_price:int=Form(0),option_3_name:str=Form(""),option_3_price:int=Form(0),option_4_name:str=Form(""),option_4_price:int=Form(0)):
+async def menu_save(request:Request,meal_id:str=Form(""),name:str=Form(...),store_id:str=Form(...),category:str=Form(...),description:str=Form(""),price:int=Form(...),image_url:str=Form(""),image_file:UploadFile|None=None,active:str|None=Form(None),sort:int=Form(99),location_ids:list[str]=Form([]),option_multiple:str|None=Form(None),option_select_count:int=Form(2),option_1_name:str=Form(""),option_1_price:int=Form(0),option_2_name:str=Form(""),option_2_price:int=Form(0),option_3_name:str=Form(""),option_3_price:int=Form(0),option_4_name:str=Form(""),option_4_price:int=Form(0)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  store=get_item("stores",store_id)
  if not store:return RedirectResponse("/admin/menu",status_code=303)
@@ -684,7 +690,9 @@ async def menu_save(request:Request,meal_id:str=Form(""),name:str=Form(...),stor
  for option_name,option_price in ((option_1_name,option_1_price),(option_2_name,option_2_price),(option_3_name,option_3_price),(option_4_name,option_4_price)):
   if option_name.strip():options.append({"name":option_name.strip(),"price":max(option_price,0)})
  valid_location_ids={item["id"] for item in list_collection("locations")}; selected_locations=[item for item in location_ids if item in valid_location_ids]
- save_item("meals",meal_id,{"name":name.strip(),"store_id":store_id,"store":store["name"],"category":category.strip(),"description":description.strip(),"price":max(price,0),"image_url":uploaded or image_url.strip() or existing.get("image_url",""),"location_ids":selected_locations,"locations_configured":True,"options":options,"active":active=="on","sort":sort})
+ multiple=option_multiple=="on" and len(options)>1
+ select_count=max(1,min(option_select_count,len(options))) if multiple else 1
+ save_item("meals",meal_id,{"name":name.strip(),"store_id":store_id,"store":store["name"],"category":category.strip(),"description":description.strip(),"price":max(price,0),"image_url":uploaded or image_url.strip() or existing.get("image_url",""),"location_ids":selected_locations,"locations_configured":True,"options":options,"option_multiple":multiple,"option_select_count":select_count,"active":active=="on","sort":sort})
  return RedirectResponse("/admin/menu",status_code=303)
 
 @app.post("/admin/menu/{meal_id}/toggle")
@@ -763,7 +771,7 @@ async def location_save(request:Request,location_id:str=Form(""),name:str=Form(.
   period_slots=MORNING_PICKUP_SLOTS if period=="morning" else AFTERNOON_PICKUP_SLOTS if period=="afternoon" else []
   selected_keys.update(slot_key(period_date,slot) for slot in period_slots if slot in (config.get("pickup_slots") or []))
  selected_keys=sorted(selected_keys)
- location_id=location_id or f"loc-{secrets.token_hex(4)}"; save_item("locations",location_id,{"name":name.strip(),"slot_keys":selected_keys,"availability_configured":True,"active":active=="on","sort":sort}); return RedirectResponse("/admin/settings",status_code=303)
+ location_id=location_id or f"loc-{secrets.token_hex(4)}"; save_item("locations",location_id,{"name":name.strip(),"slot_keys":selected_keys,"availability_configured":True,"periods_configured":True,"active":active=="on","sort":sort}); return RedirectResponse("/admin/settings",status_code=303)
 
 @app.post("/admin/locations/{location_id}/toggle")
 async def location_toggle(request:Request,location_id:str):
