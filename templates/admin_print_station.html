@@ -1,0 +1,20 @@
+{% extends "base_admin.html" %}
+{% block title %}列印工作站｜膳雉坊{% endblock %}
+{% block content %}
+<div class="page-head"><div><span class="eyebrow">PRINT STATION</span><h1>列印工作站</h1></div></div>
+<section class="panel print-station-panel">
+  <div class="print-station-status"><span class="station-light" id="stationLight"></span><div><h2 id="stationTitle">正在啟動列印工作站</h2><p id="stationMessage">請保持此頁面開啟，不要讓電腦進入睡眠。</p></div></div>
+  <div class="print-station-count"><span>本次已接收</span><strong id="stationCount">0</strong><span>筆列印工作</span></div>
+  <div class="print-station-log" id="stationLog"><p>等待手機 LINE 的列印要求……</p></div>
+  <iframe id="printFrame" title="列印小票" hidden></iframe>
+</section>
+<script>
+  const workstationId=localStorage.getItem('shanzhifangWorkstationId')||`pc-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem('shanzhifangWorkstationId',workstationId);
+  const light=document.querySelector('#stationLight'),title=document.querySelector('#stationTitle'),message=document.querySelector('#stationMessage'),log=document.querySelector('#stationLog'),frame=document.querySelector('#printFrame'),countNode=document.querySelector('#stationCount');
+  let busy=false,count=0;
+  function addLog(text){const p=document.createElement('p');p.textContent=`${new Date().toLocaleTimeString()}　${text}`;log.prepend(p);while(log.children.length>12)log.lastElementChild.remove();}
+  async function poll(){if(busy)return;try{const response=await fetch(`/admin/print-jobs/next?workstation_id=${encodeURIComponent(workstationId)}`,{cache:'no-store'});if(response.status===401){light.className='station-light error';title.textContent='登入已逾時';message.textContent='請重新登入後台，再回到列印工作站。';return;}const data=await response.json();light.className='station-light online';title.textContent='列印工作站連線中';message.textContent='保持此頁開啟，手機 LINE 點擊列印後會自動出單。';if(data.job){busy=true;count+=1;countNode.textContent=count;addLog(`收到訂單 ${data.job.order_id}，準備列印`);frame.onload=()=>{setTimeout(async()=>{await fetch(`/admin/print-jobs/${encodeURIComponent(data.job.id)}/complete`,{method:'POST'}).catch(()=>{});busy=false;addLog(`訂單 ${data.job.order_id} 已送往預設印表機`);},3000)};frame.src=data.job.print_url;}}catch(error){light.className='station-light error';title.textContent='暫時無法連線';message.textContent='系統會持續重新連線，請確認網路是否正常。';}}
+  setInterval(poll,2000);poll();
+</script>
+{% endblock %}

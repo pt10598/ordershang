@@ -6,7 +6,7 @@ from typing import Any
 
 import firebase_admin
 from fastapi import BackgroundTasks, FastAPI, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from firebase_admin import credentials, firestore
@@ -22,6 +22,7 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 cancel_serializer=URLSafeTimedSerializer(SESSION_SECRET,salt="customer-order-cancel")
 line_status_serializer=URLSafeTimedSerializer(SESSION_SECRET,salt="line-order-status")
+print_serializer=URLSafeTimedSerializer(SESSION_SECRET,salt="line-order-print")
 TAIPEI_TZ=timezone(timedelta(hours=8))
 
 def taipei_datetime(value):
@@ -64,7 +65,7 @@ def fixed_pickup_slots(morning_open=True,afternoon_open=True):
 
 class MemoryStore:
  def __init__(self):
-  self.meals={x["id"]:x.copy() for x in DEFAULT_MEALS}; self.locations={x["id"]:x.copy() for x in DEFAULT_LOCATIONS}; self.stores={x["id"]:x.copy() for x in DEFAULT_STORES}; self.orders={}
+  self.meals={x["id"]:x.copy() for x in DEFAULT_MEALS}; self.locations={x["id"]:x.copy() for x in DEFAULT_LOCATIONS}; self.stores={x["id"]:x.copy() for x in DEFAULT_STORES}; self.orders={}; self.print_jobs={}
   self.settings={"order_date":datetime.now().strftime("%Y-%m-%d"),"headline":"膳雉坊・美味現點","ordering_open":True}
   self.pickup_dates={"date-default":{"id":"date-default","date":self.settings["order_date"],"pickup_slots":DEFAULT_PICKUP_SLOTS,"morning_open":True,"afternoon_open":True,"fixed_periods_v1":True,"active":True,"sort":1}}
   self.schedules={f"schedule-{i+1}":{"id":f"schedule-{i+1}","date":self.settings["order_date"],"location_id":x["id"],"location_name":x["name"],"pickup_slots":x["pickup_slots"],"active":True,"sort":x["sort"]} for i,x in enumerate(DEFAULT_LOCATIONS)}
@@ -196,6 +197,33 @@ def list_orders():
  rows=([{"id":d.id,**(d.to_dict() or {})} for d in db.collection("orders").stream()] if db else list(memory.orders.values()))
  return sorted(rows,key=lambda x:x.get("created_at",""),reverse=True)
 
+def create_print_job(oid,requested_by="LINE"):
+ job_id=f"print-{datetime.now().strftime('%y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+ data={"order_id":oid,"status":"pending","requested_by":requested_by,"created_at":datetime.now(timezone.utc).isoformat(),"attempts":0}
+ if db:db.collection("print_jobs").document(job_id).set(data)
+ else:memory.print_jobs[job_id]={"id":job_id,**data}
+ return job_id
+
+def next_print_job(workstation_id):
+ now=datetime.now(timezone.utc); candidates=[]
+ if db:
+  for doc in db.collection("print_jobs").stream():candidates.append({"id":doc.id,**(doc.to_dict() or {})})
+ else:candidates=[item.copy() for item in memory.print_jobs.values()]
+ candidates.sort(key=lambda item:item.get("created_at",""))
+ for job in candidates:
+  lease=taipei_datetime(job.get("lease_until"))
+  if job.get("status")=="pending" or (job.get("status")=="printing" and (not lease or lease<=datetime.now(TAIPEI_TZ))):
+   updates={"status":"printing","workstation_id":workstation_id,"claimed_at":now.isoformat(),"lease_until":(now+timedelta(minutes=2)).isoformat(),"attempts":int(job.get("attempts",0))+1}
+   if db:db.collection("print_jobs").document(job["id"]).set(updates,merge=True)
+   else:memory.print_jobs[job["id"]].update(updates)
+   return {**job,**updates}
+ return None
+
+def complete_print_job(job_id,status="sent",error=""):
+ updates={"status":status,"completed_at":datetime.now(timezone.utc).isoformat(),"error":error[:500]}
+ if db:db.collection("print_jobs").document(job_id).set(updates,merge=True)
+ elif job_id in memory.print_jobs:memory.print_jobs[job_id].update(updates)
+
 def list_orders_by_phone(phone):
  if db:
   docs=db.collection("orders").where("phone","==",phone).stream()
@@ -266,7 +294,7 @@ def line_member_name(group_id,user_id):
 
 STATUS_LABELS={"new":"新訂單","confirmed":"已確認","completed":"已完成","picked_up":"已取餐","cancelled":"已取消"}
 
-def send_order_notification(oid,order):
+def send_order_notification(oid,order,base_url=""):
  group_id=get_settings().get("line_group_id")
  if not group_id:return
  item_lines="\n".join(f"・{item['name']} × {item['qty']}　NT$ {item['subtotal']}" for item in order["items"])
@@ -286,6 +314,8 @@ def send_order_notification(oid,order):
  for status in ("confirmed","completed","picked_up","cancelled"):
   token=line_status_serializer.dumps({"order_id":oid,"status":status,"group_id":group_id})
   buttons.append({"type":"button","style":"primary","height":"sm","margin":"sm","color":button_colors[status],"action":{"type":"postback","label":STATUS_LABELS[status],"data":f"order_status:{token}"}})
+ print_token=print_serializer.dumps({"order_id":oid,"group_id":group_id})
+ buttons.insert(0,{"type":"button","style":"primary","height":"sm","color":"#991B1F","action":{"type":"postback","label":"列印餐點小票","data":f"order_print:{print_token}"}})
  flex={"type":"flex","altText":f"膳雉坊新訂單 {oid}｜{order['customer_name']}｜NT$ {order['total']}","contents":{"type":"bubble","size":"mega","body":{"type":"box","layout":"vertical","contents":[{"type":"text","text":message,"wrap":True,"size":"sm","color":"#211817"}]},"footer":{"type":"box","layout":"vertical","spacing":"sm","contents":buttons}}}
  push_line_messages(group_id,[flex])
 
@@ -500,7 +530,7 @@ async def submit_order(request:Request,background_tasks:BackgroundTasks,customer
   payment_url=result["info"]["paymentUrl"].get("web") or result["info"]["paymentUrl"].get("app")
   update_order(oid,{"line_pay_transaction_id":transaction_id,"line_pay_payment_url":payment_url,"updated_at":datetime.now(timezone.utc).isoformat()})
   return RedirectResponse(payment_url,status_code=303)
- background_tasks.add_task(send_order_notification,oid,order)
+ background_tasks.add_task(send_order_notification,oid,order,str(request.base_url).rstrip("/"))
  return RedirectResponse(f"/orders/{oid}/success",status_code=303)
 
 @app.get("/linepay/confirm",response_class=HTMLResponse)
@@ -516,7 +546,7 @@ async def line_pay_confirm(request:Request,background_tasks:BackgroundTasks,orde
  if result.get("returnCode")!="0000":
   update_order(order_id,{"payment_status":"failed","status":"cancelled","payment_error":f"{result.get('returnCode','')} {result.get('returnMessage','')}","updated_at":datetime.now(timezone.utc).isoformat()}); return render(request,"message.html",title="付款未成功",message=f"訂單 {order_id} 未付款且已自動取消：{result.get('returnMessage','請重新下單')}。")
  now=datetime.now(timezone.utc).isoformat(); updates={"payment_status":"paid","paid_at":now,"invoice_status":"pending","updated_at":now,"line_pay_confirm_result_code":result.get("returnCode")}; update_order(order_id,updates); order.update(updates)
- background_tasks.add_task(send_order_notification,order_id,order)
+ background_tasks.add_task(send_order_notification,order_id,order,str(request.base_url).rstrip("/"))
  return RedirectResponse(f"/orders/{order_id}/success",status_code=303)
 
 @app.get("/linepay/cancel",response_class=HTMLResponse)
@@ -539,6 +569,22 @@ async def line_webhook(request:Request):
   if source.get("type")=="group" and source.get("groupId"):
    group_id=source["groupId"]
    settings=get_settings()
+   if event.get("type")=="postback" and event.get("postback",{}).get("data","").startswith("order_print:"):
+    reply_token=event.get("replyToken","")
+    try:action=print_serializer.loads(event["postback"]["data"].split(":",1)[1],max_age=60*60*24*30)
+    except (BadSignature,SignatureExpired):
+     reply_line_message(reply_token,"⚠️ 此列印按鈕已失效，請使用較新的訂單通知或至後台列印。")
+     continue
+    oid=str(action.get("order_id","")); order=get_order(oid)
+    if action.get("group_id")!=group_id or not order:
+     reply_line_message(reply_token,f"⚠️ 找不到訂單 {oid}，未送出列印。")
+     continue
+    if order.get("status")=="cancelled":
+     reply_line_message(reply_token,f"⚠️ 訂單 {oid} 已取消，未送出列印。")
+     continue
+    job_id=create_print_job(oid,line_member_name(group_id,source.get("userId","")))
+    reply_line_message(reply_token,f"🖨️ 已送出列印\n訂單編號：{oid}\n工作編號：{job_id}\n店內列印工作站接收後會自動出單。")
+    continue
    if event.get("type")=="postback" and event.get("postback",{}).get("data","").startswith("order_status:"):
     reply_token=event.get("replyToken","")
     try:action=line_status_serializer.loads(event["postback"]["data"].split(":",1)[1],max_age=60*60*24*30)
@@ -655,11 +701,54 @@ async def order_status(request:Request,background_tasks:BackgroundTasks,oid:str,
  return RedirectResponse(safe_return,status_code=303)
 
 @app.get("/admin/orders/{oid}/print",response_class=HTMLResponse)
-async def admin_order_print(request:Request,oid:str,autoprint:int=0):
+async def admin_order_print(request:Request,oid:str,autoprint:int=0,job_id:str=""):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  order=get_order(oid)
  if not order:return HTMLResponse("找不到訂單",status_code=404)
- return render(request,"admin_order_print.html",order=order,autoprint=autoprint==1)
+ return render(request,"admin_order_print.html",order=order,autoprint=autoprint==1,job_id=job_id)
+
+@app.get("/print/orders/{oid}",response_class=HTMLResponse)
+async def signed_order_print(request:Request,oid:str,token:str="",autoprint:int=0):
+ try:data=print_serializer.loads(token,max_age=60*60*24*30)
+ except (BadSignature,SignatureExpired):return HTMLResponse("列印連結無效或已過期",status_code=403)
+ if data.get("order_id")!=oid:return HTMLResponse("列印連結與訂單不一致",status_code=403)
+ order=get_order(oid)
+ if not order:return HTMLResponse("找不到訂單",status_code=404)
+ return render(request,"admin_order_print.html",order=order,autoprint=autoprint==1,job_id="")
+
+@app.get("/print/request/{oid}",response_class=HTMLResponse)
+async def request_remote_print(request:Request,oid:str,token:str=""):
+ try:data=print_serializer.loads(token,max_age=60*60*24*30)
+ except (BadSignature,SignatureExpired):return HTMLResponse("列印連結無效或已過期",status_code=403)
+ if data.get("order_id")!=oid:return HTMLResponse("列印連結與訂單不一致",status_code=403)
+ order=get_order(oid)
+ if not order:return HTMLResponse("找不到訂單",status_code=404)
+ if order.get("status")=="cancelled":return render(request,"print_request_result.html",ok=False,order_id=oid,message="此訂單已取消，未送出列印。")
+ job_id=create_print_job(oid,"LINE")
+ return render(request,"print_request_result.html",ok=True,order_id=oid,message=f"已送出列印工作 {job_id}，店內電腦接收後會自動出單。")
+
+@app.get("/admin/print-station",response_class=HTMLResponse)
+async def admin_print_station(request:Request):
+ if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
+ return render(request,"admin_print_station.html")
+
+@app.get("/admin/print-jobs/next")
+async def admin_next_print_job(request:Request,workstation_id:str=""):
+ if not is_admin(request):return JSONResponse({"ok":False,"error":"unauthorized"},status_code=401)
+ workstation_id=re.sub(r"[^a-zA-Z0-9_-]","",workstation_id)[:80] or "browser"
+ job=next_print_job(workstation_id)
+ if not job:return {"ok":True,"job":None}
+ order=get_order(job.get("order_id",""))
+ if not order:
+  complete_print_job(job["id"],"failed","找不到訂單")
+  return {"ok":True,"job":None}
+ return {"ok":True,"job":{"id":job["id"],"order_id":job["order_id"],"print_url":f"/admin/orders/{urllib.parse.quote(job['order_id'])}/print?autoprint=1&job_id={urllib.parse.quote(job['id'])}"}}
+
+@app.post("/admin/print-jobs/{job_id}/complete")
+async def admin_complete_print_job(request:Request,job_id:str):
+ if not is_admin(request):return JSONResponse({"ok":False},status_code=401)
+ complete_print_job(job_id,"sent")
+ return {"ok":True}
 
 @app.get("/admin/menu",response_class=HTMLResponse)
 async def admin_menu(request:Request,edit:str|None=None):
@@ -730,6 +819,13 @@ async def admin_settings(request:Request):
 async def settings_save(request:Request,headline:str=Form(...),ordering_open:str|None=Form(None)):
  if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
  save_settings({"headline":headline.strip(),"ordering_open":ordering_open=="on"}); return RedirectResponse("/admin/settings",status_code=303)
+
+@app.post("/admin/line/disconnect")
+async def admin_line_disconnect(request:Request):
+ if not is_admin(request):return RedirectResponse("/admin/login",status_code=303)
+ new_code=secrets.token_hex(3).upper()
+ save_settings({"line_group_id":"","line_group_connected_at":"","line_pairing_code":new_code})
+ return RedirectResponse("/admin/settings?line_disconnected=1",status_code=303)
 
 @app.post("/admin/pickup-dates/save")
 async def pickup_date_save(request:Request,pickup_date_id:str=Form(""),date:str=Form(""),dates:str=Form(""),morning_open:str|None=Form(None),afternoon_open:str|None=Form(None),active:str|None=Form(None),sort:int=Form(99)):

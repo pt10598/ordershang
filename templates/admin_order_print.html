@@ -22,6 +22,12 @@
     <div class="dash"></div>
     <div class="footer">付款：{{ 'LINE Pay 已付款' if order.payment_method=='line_pay' and order.payment_status=='paid' else ('LINE Pay 未完成' if order.payment_method=='line_pay' else '現場付款') }}　｜　{{ order.invoice_label|default('收據',true) }}</div>
   </main>
-  {% if autoprint %}<script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));</script>{% endif %}
+  {% if autoprint %}<script>
+    const jobId={{ job_id|tojson }};
+    let reported=false;
+    async function reportPrinted(){if(reported||!jobId)return;reported=true;try{await fetch(`/admin/print-jobs/${encodeURIComponent(jobId)}/complete`,{method:'POST',credentials:'same-origin'});}catch(error){}}
+    window.addEventListener('afterprint',reportPrinted);
+    window.addEventListener('load',()=>setTimeout(()=>window.print(),350));
+  </script>{% endif %}
 </body>
 </html>
